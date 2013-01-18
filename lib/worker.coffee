@@ -2,8 +2,9 @@ _ = require 'underscore'
 os = require 'os'
 async = require 'async'
 procinfo = require 'procinfo'
-child_process = require 'child_process'
 {EventEmitter} = require 'events'
+
+#child_process = require 'child_process'
 
 Queue = require './queue'
 settings = require './settings'
@@ -48,8 +49,6 @@ class Worker extends EventEmitter
     @registry.register(o)
 
   constructor: (options = {}) ->
-    @_is_child = process.send?
-
     @_queue_cache = {}
     @_queues = options.queues || settings.worker.queues
     Object.defineProperty(@, '_queues', {get: -> Worker.registry.queues()}) unless @_queues?
@@ -65,10 +64,6 @@ class Worker extends EventEmitter
     @_current_poll_timeout = @_min_poll_timeout
 
     @_state = 'uninitialized'
-
-    @_child_workers = []
-    @_all_children = []
-
     @_worker_heartbeat = new WorkerHeartbeat(@)
 
     @name = process.pid + new Date().getTime() + require('crypto').randomBytes(8).toString('hex')
@@ -78,24 +73,25 @@ class Worker extends EventEmitter
     @_state = 'initializing'
     @emit(@_state)
 
-    async.map _.range(@_concurrent_commands), (idx, cb) ->
-      start_child = (command, args) ->
-        log "Starting child #{command} #{args.join(' ')}"
-        child = child_process.fork(command, args, {cwd: '.', env: process.env})
-        child.on 'message', (msg) ->
-          cb(null, child) if msg.status is 'ready'
+    #async.map _.range(@_concurrent_commands), (idx, cb) ->
+    #  start_child = (command, args) ->
+    #    log "Starting child #{command} #{args.join(' ')}"
+    #    child = child_process.fork(command, args, {cwd: '.', env: process.env})
+    #    child.on 'message', (msg) ->
+    #      cb(null, child) if msg.status is 'ready'
 
-      if process.argv[0] is 'node'
-        start_child(process.argv[1], process.argv.slice(2))
-      else if process.argv[0] is 'coffee'
-        start_child(process.argv[1], process.argv.slice(2))
-    , (err, children) =>
-      return callback(err) if err?
-      @_child_workers = children
-      @_all_children = children.slice(0)
-      @_state = 'initialized'
-      callback()
-      @emit(@_state)
+    #  if process.argv[0] is 'node'
+    #    start_child(process.argv[1], process.argv.slice(2))
+    #  else if process.argv[0] is 'coffee'
+    #    start_child(process.argv[1], process.argv.slice(2))
+    #, (err, children) =>
+    #  return callback(err) if err?
+    #  @_child_workers = children
+    #  @_all_children = children.slice(0)
+
+    @_state = 'initialized'
+    callback()
+    @emit(@_state)
 
   next_queue: ->
     queues = @_queues
@@ -117,33 +113,37 @@ class Worker extends EventEmitter
     command = Worker.registry.get(envelope.command)
     return @error("Unknown command: #{envelope.command}", envelope) unless command?
 
-    worker = @_child_workers.shift()
-
     @emit('log', "Processing #{envelope.command}", envelope)
     @emit('work', envelope)
     status = {
       envelope: envelope
-      worker: worker
     }
     @_current_commands[envelope.id] = status
 
-    on_message = (msg) =>
-      if msg.status is 'error'
-        @_child_workers.push(status.worker)
-        @error(msg.error, envelope)
-        # child.kill()
-      else if msg.status is 'success'
-        @_child_workers.push(status.worker)
-        @success(envelope)
-        # child.kill()
+    #on_message = (msg) =>
+    #  if msg.status is 'error'
+    #    @_child_workers.push(status.worker)
+    #    @error(msg.error, envelope)
+    #    # child.kill()
+    #  else if msg.status is 'success'
+    #    @_child_workers.push(status.worker)
+    #    @success(envelope)
+    #    # child.kill()
 
-      # If this is the last in a graceful shutdown
-      @graceful_stop() if @ready_for_graceful()
+    #status.worker.once 'message', on_message
+    #log "Sending #{envelope.command} to worker #{status.worker.pid}"
 
-    status.worker.once 'message', on_message
+    @work {command: envelope.command, opts: envelope.value}, (err) =>
+      return @error(err, envelope) if err?
+      @success(envelope)
 
-    log "Sending #{envelope.command} to worker #{status.worker.pid}"
-    status.worker.send {command: envelope.command, opts: envelope.value}
+  work: (command, opts, callback) ->
+    try
+      command opts, (err) ->
+        return callback(err) if err?
+        callback()
+    catch e
+      callback(e)
 
   success: (envelope) ->
     delete @_current_commands[envelope.id]
@@ -164,7 +164,7 @@ class Worker extends EventEmitter
     @increase_timeout()
 
   ready_for_next: ->
-    Object.keys(@_current_commands).length < @_concurrent_commands and @_child_workers.length > 0
+    Object.keys(@_current_commands).length < @_concurrent_commands
 
   next: (timeout) ->
     setTimeout((=> @work()), timeout || @_current_poll_timeout)
@@ -186,8 +186,6 @@ class Worker extends EventEmitter
       @next()
 
   start: (callback) ->
-    return require('./worker_child') if @_is_child
-
     switch @_state
       when 'initialized' then process.nextTick(-> callback?())
       when 'running' then process.nextTick(-> callback?())
@@ -246,16 +244,16 @@ class Worker extends EventEmitter
       }
     }
 
-    async.map @_all_children, (c, cb) ->
-      procinfo.memory c.pid, (err, mem) ->
-        return cb(err) if err?
-        o.stats.resident_total += mem.resident
-        cb(null, procinfo.pretty_object(mem))
-    , (err, children) ->
-      return callback(err) if err?
-      o.stats.children = children
-      o.stats.resident_total = procinfo.pretty(o.stats.resident_total)
-      callback(null, o)
+    #async.map @_all_children, (c, cb) ->
+    #  procinfo.memory c.pid, (err, mem) ->
+    #    return cb(err) if err?
+    #    o.stats.resident_total += mem.resident
+    #    cb(null, procinfo.pretty_object(mem))
+    #, (err, children) ->
+    #  return callback(err) if err?
+    #  o.stats.children = children
+    #  o.stats.resident_total = procinfo.pretty(o.stats.resident_total)
+    #  callback(null, o)
 
   @workers: (callback) ->
     create_client().keys "#{settings.namespace}:worker:*", (err, keys) ->
