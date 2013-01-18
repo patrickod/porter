@@ -133,13 +133,15 @@ class Worker extends EventEmitter
     #status.worker.once 'message', on_message
     #log "Sending #{envelope.command} to worker #{status.worker.pid}"
 
-    @work {command: envelope.command, opts: envelope.value}, (err) =>
+    @execute_command envelope.command, envelope.value, (err) =>
       return @error(err, envelope) if err?
       @success(envelope)
 
-  work: (command, opts, callback) ->
+  execute_command: (command, opts, callback) ->
+    f = Worker.registry.get(command)
+
     try
-      command opts, (err) ->
+      f opts, (err) ->
         return callback(err) if err?
         callback()
     catch e
