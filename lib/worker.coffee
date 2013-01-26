@@ -245,6 +245,7 @@ class Worker extends EventEmitter
         }
       }
     }
+    callback(null, o)
 
     #async.map @_all_children, (c, cb) ->
     #  procinfo.memory c.pid, (err, mem) ->

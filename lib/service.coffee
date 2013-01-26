@@ -6,24 +6,24 @@ class Service
 
   constructor: (@interval = 5000, @run_on_start = true) ->
     @status = Service.Status.STOPPED
-  
+
   start: ->
     return if @interval_id
-    
+
     @started_at = new Date()
     @status = Service.Status.RUNNING
     @interval_id = setInterval(=>
       @run()
     , @interval)
-    
+
     @run() if @run_on_start
-  
+
   stop: ->
     clearInterval(@interval_id)
     @interval_id = null
     @status = Service.Status.STOPPED
     @stopped_at = new Date()
-  
+
   status: ->
     {
       state: @status
